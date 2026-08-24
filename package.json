@@ -1,0 +1,40 @@
+{
+  "name": "voip-ai-admin-panel",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Self-hosted VoIP call-recording ingestion API and admin panel: receives Asterisk recordings over a webhook, analyses them with Gemini, and pushes calls + transcripts to a downstream panel.",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.11"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "lint": "next lint",
+    "db:migrate": "tsx scripts/migrate.ts",
+    "admin:set-password": "tsx scripts/set-admin-password.ts",
+    "test": "node --import tsx --test tests/*.test.ts"
+  },
+  "dependencies": {
+    "@google/genai": "^1.9.0",
+    "better-sqlite3": "^12.2.0",
+    "drizzle-orm": "^0.44.2",
+    "next": "^15.4.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "server-only": "^0.0.1",
+    "zod": "^4.0.5"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.1.11",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.15.0",
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6",
+    "tailwindcss": "^4.1.11",
+    "tsx": "^4.20.3",
+    "typescript": "^5.8.3"
+  }
+}

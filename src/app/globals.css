@@ -1,0 +1,134 @@
+@import 'tailwindcss';
+
+/*
+ * A small, deliberately boring design system: one accent colour, one surface
+ * colour, generous borders. The panel is an operations tool that people stare
+ * at while something is broken, so legibility beats decoration.
+ *
+ * Colours are declared in @theme, which makes Tailwind generate the matching
+ * utilities: --color-surface-raised gives `bg-surface-raised`, --color-border
+ * gives `border-border`, and so on.
+ */
+
+@theme {
+  --color-surface: #0f1720;
+  --color-surface-raised: #16202b;
+  --color-surface-sunken: #0a1017;
+  --color-border: #243040;
+  --color-border-strong: #33465c;
+
+  --color-content: #e6edf5;
+  --color-content-muted: #93a4b8;
+  --color-content-faint: #6b7d92;
+
+  --color-accent: #38bdf8;
+  --color-accent-strong: #0ea5e9;
+  --color-accent-ink: #04121c;
+
+  --color-ok: #34d399;
+  --color-warn: #fbbf24;
+  --color-danger: #f87171;
+
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans Arabic', Vazirmatn,
+    Tahoma, sans-serif;
+  --font-mono: ui-monospace, 'JetBrains Mono', 'Fira Code', 'SF Mono', Menlo, monospace;
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  background: var(--color-surface);
+  color: var(--color-content);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/*
+ * Persian transcripts and Latin filenames sit side by side, so text direction
+ * is set per element rather than inherited from the page. dir="auto" lets the
+ * browser choose from the first strong character.
+ */
+[dir='auto'] {
+  unicode-bidi: plaintext;
+}
+
+:lang(fa) {
+  line-height: 1.85;
+}
+
+@layer components {
+  .card {
+    @apply rounded-lg border border-border bg-surface-raised;
+  }
+
+  .card-header {
+    @apply flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3;
+  }
+
+  .card-title {
+    @apply text-sm font-semibold tracking-wide;
+  }
+
+  .btn {
+    @apply inline-flex cursor-pointer items-center justify-center gap-2 rounded-md border
+      border-border-strong bg-surface-raised px-3 py-2 text-sm font-medium text-content
+      transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed
+      disabled:opacity-50;
+  }
+
+  .btn-primary {
+    @apply border-transparent bg-accent-strong text-accent-ink hover:bg-accent
+      hover:text-accent-ink;
+  }
+
+  .btn-danger {
+    @apply border-transparent bg-danger text-[#1b0808] hover:bg-[#fca5a5] hover:text-[#1b0808];
+  }
+
+  .btn-sm {
+    @apply px-2.5 py-1.5 text-xs;
+  }
+
+  .field-label {
+    @apply mb-1.5 block text-xs font-medium tracking-wide text-content-muted;
+  }
+
+  .field-hint {
+    @apply mt-1.5 text-xs leading-relaxed text-content-faint;
+  }
+
+  .input {
+    @apply w-full rounded-md border border-border-strong bg-surface-sunken px-3 py-2 text-sm
+      text-content outline-none transition-colors placeholder:text-content-faint
+      focus:border-accent;
+  }
+
+  .textarea {
+    @apply w-full rounded-md border border-border-strong bg-surface-sunken px-3 py-2 font-mono
+      text-xs leading-relaxed text-content outline-none transition-colors focus:border-accent;
+  }
+
+  .badge {
+    @apply inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium;
+  }
+
+  .table {
+    @apply w-full border-collapse text-sm;
+  }
+
+  .table th {
+    @apply border-b border-border px-3 py-2 text-start text-xs font-semibold tracking-wide
+      text-content-muted;
+  }
+
+  .table td {
+    @apply border-b border-border px-3 py-2 align-top;
+  }
+
+  .table tbody tr:hover {
+    background: color-mix(in srgb, var(--color-accent) 6%, transparent);
+  }
+}

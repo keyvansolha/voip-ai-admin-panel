@@ -1,0 +1,27 @@
+# --- Original migration material (private notes, panel docs, old n8n code) ---
+reference/
+
+# --- Runtime data: SQLite DB, stored recordings, Google credentials ---
+data/
+secrets/
+*.db
+*.db-shm
+*.db-wal
+
+# --- Env ---
+.env
+.env.local
+.env.*.local
+
+# --- Node / Next ---
+node_modules/
+.next/
+out/
+next-env.d.ts
+*.tsbuildinfo
+
+# --- Misc ---
+.DS_Store
+npm-debug.log*
+yarn-error.log*
+coverage/

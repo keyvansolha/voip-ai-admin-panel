@@ -1,0 +1,16 @@
+node_modules
+.next
+out
+data
+secrets
+reference
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+*.md
+!README.md
+npm-debug.log*
+coverage
+.DS_Store
