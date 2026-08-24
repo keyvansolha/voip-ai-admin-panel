@@ -92,18 +92,31 @@ voip.example.com {
 
 ```bash
 sudo install -m 755 scripts/send-recording.sh /usr/local/bin/
+
 sudo tee /etc/voip-ai-manager.conf >/dev/null <<'EOF'
 INGEST_URL=https://voip.example.com/api/ingest
 INGEST_TOKEN=paste-the-token-from-the-panel
 EOF
 sudo chmod 600 /etc/voip-ai-manager.conf
+
+# Asterisk runs the script as its own user, so it needs to own the log and spool.
+sudo install -o asterisk -g asterisk -m 640 /dev/null /var/log/voip-ai-manager.log
+sudo install -d -o asterisk -g asterisk -m 750 /var/spool/voip-ai-manager
 ```
+
+> Adjust ownership if your Asterisk runs as a different user — check with
+> `ps -o user= -C asterisk`. If it cannot write the log, uploads still work but
+> you lose the only record of what the store PC tried to send.
 
 Point your hangup handler at it:
 
 ```
 same => n,System(/usr/local/bin/send-recording.sh "${MIXMONITOR_FILENAME}")
 ```
+
+`${MIXMONITOR_FILENAME}` is often a bare name rather than a full path; the
+script resolves it against `MONITOR_DIR` (default
+`/var/spool/asterisk/monitor`), so either form works.
 
 Verify before wiring it up:
 
@@ -112,14 +125,32 @@ curl -H "X-Ingest-Token: $TOKEN" https://voip.example.com/api/ingest
 # {"success":true,"message":"Ingest endpoint is reachable and the token is valid."}
 ```
 
-If the network drops, the script retries with backoff and then parks the file in
-`/var/spool/voip-ai-manager` rather than losing it. Replay the spool with:
+The script **returns immediately** and uploads in a detached background
+process. A hangup handler runs on the channel thread, so a synchronous upload
+would hold the channel open for the length of the transfer — and with retries,
+potentially minutes.
+
+If the link drops it retries with backoff, then parks the recording in
+`/var/spool/voip-ai-manager`. Drain the spool with `--flush`, which is safe to
+run on a timer because a recording that did arrive is recognised as a duplicate
+and cleared:
 
 ```bash
-for f in /var/spool/voip-ai-manager/*.wav; do
-  /usr/local/bin/send-recording.sh "$f" && rm -f "$f"
-done
+sudo tee /etc/cron.d/voip-ai-manager >/dev/null <<'EOF'
+*/15 * * * * asterisk /usr/local/bin/send-recording.sh --flush
+EOF
 ```
+
+| Setting           | Default                        | Purpose                                   |
+| ----------------- | ------------------------------ | ----------------------------------------- |
+| `INGEST_URL`      | —                              | Required                                  |
+| `INGEST_TOKEN`    | —                              | Required                                  |
+| `MONITOR_DIR`     | `/var/spool/asterisk/monitor`  | Where a bare filename is resolved         |
+| `SPOOL_DIR`       | `/var/spool/voip-ai-manager`   | Parking area for failed uploads           |
+| `LOG_FILE`        | `/var/log/voip-ai-manager.log` | Upload log                                |
+| `MAX_ATTEMPTS`    | `5`                            | Tries before spooling                     |
+| `SETTLE_SECONDS`  | `2`                            | Pause so Asterisk finishes flushing the WAV |
+| `KEEP_LOCAL`      | `1`                            | `0` deletes the recording once accepted   |
 
 ---
 
