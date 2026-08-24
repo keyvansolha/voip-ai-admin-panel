@@ -162,13 +162,18 @@ export const en = {
   'settings.ai.enabled': 'Analyse recordings with AI',
   'settings.ai.provider': 'Access method',
   'settings.ai.provider.gemini_api': 'Gemini API key (AI Studio)',
-  'settings.ai.provider.vertex': 'Vertex AI on Google Cloud (uses Cloud credit)',
+  'settings.ai.provider.vertex_express':
+    'Gemini Enterprise, API key (express mode) — no Google Cloud project needed',
+  'settings.ai.provider.vertex':
+    'Gemini Enterprise / Vertex AI, service account (bills a Cloud project)',
   'settings.ai.apiKey': 'Gemini API key',
+  'settings.ai.apiKeyHelp':
+    'Used by both "Gemini API key (AI Studio)" and express mode. A plain string — not a JSON file.',
   'settings.ai.vertexProject': 'Google Cloud project id',
   'settings.ai.vertexLocation': 'Vertex region',
   'settings.ai.serviceAccount': 'Service account JSON',
   'settings.ai.serviceAccountHelp':
-    'Paste the whole key file. Leave empty to use ambient Application Default Credentials.',
+    'Only for the service-account method. Paste the whole downloaded key file. Leave empty only if this host already provides Application Default Credentials — a container normally does not.',
   'settings.ai.model': 'Model',
   'settings.ai.temperature': 'Temperature',
   'settings.ai.maxOutputTokens': 'Max output tokens',
@@ -397,13 +402,18 @@ export const fa: Record<TranslationKey, string> = {
   'settings.ai.enabled': 'تحلیل فایل‌ها با هوش مصنوعی',
   'settings.ai.provider': 'روش دسترسی',
   'settings.ai.provider.gemini_api': 'کلید API جمنای (AI Studio)',
-  'settings.ai.provider.vertex': 'Vertex AI روی گوگل کلاد (مصرف از اعتبار کلاد)',
+  'settings.ai.provider.vertex_express':
+    'Gemini Enterprise با کلید API (حالت express) — نیازی به پروژه گوگل کلاد ندارد',
+  'settings.ai.provider.vertex':
+    'Gemini Enterprise / Vertex AI با سرویس‌اکانت (از پروژه کلاد کسر می‌شود)',
   'settings.ai.apiKey': 'کلید API جمنای',
+  'settings.ai.apiKeyHelp':
+    'هم برای «کلید API جمنای (AI Studio)» و هم برای حالت express استفاده می‌شود. یک رشته ساده است، نه فایل JSON.',
   'settings.ai.vertexProject': 'شناسه پروژه گوگل کلاد',
   'settings.ai.vertexLocation': 'ناحیه Vertex',
   'settings.ai.serviceAccount': 'فایل JSON سرویس‌اکانت',
   'settings.ai.serviceAccountHelp':
-    'کل محتوای فایل کلید را اینجا بگذارید. برای استفاده از ADC محیط، خالی بگذارید.',
+    'فقط برای روش سرویس‌اکانت. کل محتوای فایل کلید دانلودشده را اینجا بگذارید. خالی گذاشتن فقط وقتی درست است که خود سرور ADC داشته باشد — کانتینر معمولاً ندارد.',
   'settings.ai.model': 'مدل',
   'settings.ai.temperature': 'دما (Temperature)',
   'settings.ai.maxOutputTokens': 'حداکثر توکن خروجی',

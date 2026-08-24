@@ -100,26 +100,50 @@ function parseServiceAccount(json: string): Record<string, unknown> {
   return record;
 }
 
+/** True when the process can supply Application Default Credentials on its own. */
+function ambientCredentialsAvailable(): boolean {
+  return Boolean(
+    process.env.GOOGLE_APPLICATION_CREDENTIALS ||
+      process.env.GOOGLE_CLOUD_PROJECT ||
+      process.env.GCE_METADATA_HOST,
+  );
+}
+
 export function createGeminiClient(settings: AiSettings): GoogleGenAI {
   const timeout = settings['ai.timeoutMs'];
+  const provider = settings['ai.provider'];
+  const apiKey = settings['ai.apiKey'].trim();
 
-  if (settings['ai.provider'] === 'vertex') {
+  // --- Enterprise / Vertex, OAuth: service account or ambient ADC ----------
+  if (provider === 'vertex') {
     const project = settings['ai.vertexProject'].trim();
     const location = settings['ai.vertexLocation'].trim() || 'us-central1';
+    const rawCredentials = settings['ai.vertexServiceAccountJson'].trim();
 
     if (!project) {
-      throw new AiConfigError('Vertex AI is selected but no Google Cloud project is set.');
+      throw new AiConfigError(
+        'Vertex / Gemini Enterprise is selected but no Google Cloud project is set.',
+      );
     }
 
-    const rawCredentials = settings['ai.vertexServiceAccountJson'].trim();
+    // Without a pasted key the SDK falls back to ambient ADC. Inside a
+    // container there usually is none, and google-auth-library's own error
+    // ("Could not load the default credentials") gives no hint about what to
+    // do, so refuse early with something actionable.
+    if (!rawCredentials && !ambientCredentialsAvailable()) {
+      throw new AiConfigError(
+        'Vertex / Gemini Enterprise with a service account is selected, but the service-account ' +
+          'JSON box is empty and this container has no Application Default Credentials. ' +
+          'Either paste the service-account key file into Settings, or — if all you have is an ' +
+          'API key string — switch the access method to "Gemini Enterprise, API key (express mode)".',
+      );
+    }
 
     return new GoogleGenAI({
       vertexai: true,
       project,
       location,
       httpOptions: { timeout },
-      // With no pasted key, google-auth-library falls back to ambient ADC:
-      // GOOGLE_APPLICATION_CREDENTIALS, gcloud login, or the metadata server.
       ...(rawCredentials
         ? {
             googleAuthOptions: {
@@ -131,10 +155,24 @@ export function createGeminiClient(settings: AiSettings): GoogleGenAI {
     });
   }
 
-  const apiKey = settings['ai.apiKey'].trim();
+  // --- Enterprise / Vertex, express mode: API key only --------------------
+  if (provider === 'vertex_express') {
+    if (!apiKey) {
+      throw new AiConfigError(
+        'Express mode is selected but no API key is set. Paste the key into the "Gemini API key" field.',
+      );
+    }
+
+    // project/location must NOT be sent here: the SDK rejects the combination
+    // with "Project/location and API key are mutually exclusive". The project
+    // is implied by the key itself.
+    return new GoogleGenAI({ vertexai: true, apiKey, httpOptions: { timeout } });
+  }
+
+  // --- Gemini Developer API (AI Studio) -----------------------------------
   if (!apiKey) {
     throw new AiConfigError(
-      'No Gemini API key is configured. Add one in Settings, or switch the provider to Vertex AI.',
+      'No Gemini API key is configured. Add one in Settings, or switch the access method.',
     );
   }
 
@@ -167,6 +205,29 @@ function statusFrom(error: unknown): number | undefined {
   if (typeof candidate.status === 'number') return candidate.status;
   if (typeof candidate.code === 'number') return candidate.code;
   return undefined;
+}
+
+/**
+ * google-auth-library's "Could not load the default credentials" says nothing
+ * about which knob to turn, and it is the single most likely first-run failure.
+ * Replace it with the actual next step.
+ */
+function explainAuthFailure(message: string, provider: string): string | null {
+  if (!/default credentials|could not load the default|GOOGLE_APPLICATION_CREDENTIALS/i.test(message)) {
+    return null;
+  }
+  if (provider === 'vertex') {
+    return (
+      'Google could not find any credentials. The service-account JSON box in Settings is empty ' +
+      'and this container has no Application Default Credentials. Paste the service-account key ' +
+      'file into Settings, or switch the access method to "Gemini Enterprise, API key (express ' +
+      'mode)" if you only have an API key string.'
+    );
+  }
+  return (
+    'Google could not find any credentials for the selected access method. Check the ' +
+    'credentials in Settings.'
+  );
 }
 
 function isRetryable(error: unknown, status: number | undefined): boolean {
@@ -241,6 +302,12 @@ export async function analyzeAudio(
   } catch (cause) {
     const status = statusFrom(cause);
     const message = cause instanceof Error ? cause.message : String(cause);
+
+    // A credentials problem is a configuration fault: retrying it five times
+    // over an hour helps nobody.
+    const explained = explainAuthFailure(message, settings['ai.provider']);
+    if (explained) throw new AiRequestError(explained, false, status);
+
     throw new AiRequestError(
       `Gemini request failed${status ? ` (HTTP ${status})` : ''}: ${message}`,
       isRetryable(cause, status),
@@ -292,8 +359,13 @@ export async function testAiConnection(
       reply: extractText(response).slice(0, 200) || '(empty reply)',
     };
   } catch (cause) {
+    if (cause instanceof AiConfigError) return { ok: false, error: cause.message };
+
     const status = statusFrom(cause);
     const message = cause instanceof Error ? cause.message : String(cause);
+    const explained = explainAuthFailure(message, settings['ai.provider']);
+    if (explained) return { ok: false, error: explained };
+
     return { ok: false, error: status ? `HTTP ${status}: ${message}` : message };
   }
 }

@@ -173,19 +173,53 @@ npm run build
 
 ## Choosing how to reach Gemini
 
-**Gemini API key** — get one from AI Studio, paste it into Settings. Simplest,
-billed against the key.
+Three access methods, chosen in *Settings → Gemini*. All three use the same
+model setting, so switching between them changes nothing else.
 
-**Vertex AI** — spends Google Cloud credit. Two ways to authenticate:
+**1. Gemini API key (AI Studio)** — paste the key. Simplest; billed against the
+key.
 
-- Paste a service-account JSON into Settings. It is encrypted with `APP_SECRET`
-  before it is stored. Grant the account the *Vertex AI User* role.
-- Leave the JSON blank and rely on ambient Application Default Credentials:
-  `GOOGLE_APPLICATION_CREDENTIALS`, `gcloud auth application-default login`, or
-  the metadata server on a GCE/Cloud Run host.
+**2. Gemini Enterprise, API key (express mode)** — also just a key, but it goes
+to the Enterprise/Vertex endpoint. Use this when all you have is a key string
+and you still want the Enterprise API.
 
-Set the project id and region either way. Both methods use the same model
-setting, so switching between them changes nothing else.
+> The SDK treats project/location and an API key as **mutually exclusive** — it
+> throws `Project/location and API key are mutually exclusive in the client
+> initializer` if both are given. Express mode therefore sends the key alone;
+> the project is implied by the key. Leave the project and region fields alone
+> in this mode, they are ignored.
+
+**3. Gemini Enterprise / Vertex AI, service account** — the mode that bills a
+Google Cloud project, so this is the one that spends Cloud credit. It needs
+OAuth, which means real credentials:
+
+- Paste the downloaded service-account JSON into Settings. It is encrypted with
+  `APP_SECRET` before storage. Grant the account the *Vertex AI User* role.
+- Or leave the JSON blank **only if the host already supplies Application
+  Default Credentials** — `GOOGLE_APPLICATION_CREDENTIALS`, `gcloud auth
+  application-default login`, or a GCE/Cloud Run metadata server. A plain
+  Docker container has none of these.
+
+Set the project id and region for this method.
+
+> `Could not load the default credentials` means method 3 was selected with an
+> empty JSON box on a host without ADC. Either paste the service-account file,
+> or switch to method 2 if a key string is all you have. The app now refuses
+> this combination up front with that explanation rather than letting Google's
+> generic error through.
+
+To create a service-account key:
+
+```bash
+gcloud iam service-accounts create voip-ai --project "$PROJECT"
+gcloud projects add-iam-policy-binding "$PROJECT" \
+  --member "serviceAccount:voip-ai@$PROJECT.iam.gserviceaccount.com" \
+  --role roles/aiplatform.user
+gcloud iam service-accounts keys create key.json \
+  --iam-account "voip-ai@$PROJECT.iam.gserviceaccount.com"
+```
+
+Then paste the whole contents of `key.json` into the Settings field.
 
 ---
 

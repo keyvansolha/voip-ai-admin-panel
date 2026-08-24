@@ -164,6 +164,7 @@ export default async function SettingsPage({
             name="ai.apiKey"
             label={t('settings.ai.apiKey')}
             isSet={view.secrets['ai.apiKey']}
+            hint={t('settings.ai.apiKeyHelp')}
             labels={secretLabels}
           />
 

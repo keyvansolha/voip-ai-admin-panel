@@ -24,7 +24,19 @@ export type SecretKey = (typeof SECRET_KEYS)[number];
 
 const secretKeySet = new Set<string>(SECRET_KEYS);
 
-export const AI_PROVIDERS = ['gemini_api', 'vertex'] as const;
+/**
+ * How to reach the model:
+ *
+ *   gemini_api     — Gemini Developer API (AI Studio) key.
+ *   vertex_express — Gemini Enterprise Agent Platform (formerly Vertex AI) in
+ *                    express mode: an API key, no Google Cloud project. The SDK
+ *                    treats project/location and apiKey as mutually exclusive,
+ *                    so this mode must send the key alone.
+ *   vertex         — Gemini Enterprise Agent Platform with OAuth: a
+ *                    service-account key, or ambient Application Default
+ *                    Credentials. This is the mode that bills a Cloud project.
+ */
+export const AI_PROVIDERS = ['gemini_api', 'vertex_express', 'vertex'] as const;
 export type AiProvider = (typeof AI_PROVIDERS)[number];
 
 export const DATETIME_FORMATS = ['iso_offset', 'iso_utc', 'iso_naive'] as const;
