@@ -148,7 +148,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   'panel.baseUrl': 'https://mytsapp.ir',
   'panel.apiToken': '',
   'panel.datetimeFormat': 'iso_offset',
-  'panel.timeoutMs': 30_000,
+  // Iran-to-Europe links are slow enough that 30s produced false timeouts on
+  // writes the panel had in fact accepted.
+  'panel.timeoutMs': 60_000,
   'panel.pushMissedCalls': true,
 
   'retention.recordingDays': 30,

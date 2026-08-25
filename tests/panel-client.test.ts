@@ -334,3 +334,86 @@ describe('network failures', () => {
     });
   });
 });
+
+describe('a lost response must not be read as a lost write', () => {
+  /**
+   * The failure this reproduces: on a slow link the POST reaches the panel and
+   * the row is inserted, but the reply never arrives. Reporting that as a
+   * failure abandons a call that is already stored — and, because createCall
+   * throws, the transcript step is never reached at all.
+   */
+  it('recovers the id when the POST times out but the row landed', async () => {
+    let posts = 0;
+    globalThis.fetch = (async (input: URL | RequestInfo, init?: RequestInit) => {
+      if ((init?.method ?? 'GET') === 'POST') {
+        posts += 1;
+        throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+      }
+      assert.match(String(input), /ast_unique_seq=4705/);
+      return new Response(JSON.stringify({ total_items: 1, results: [{ id: 1767882711 }] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }) as typeof fetch;
+
+    const result = await new PanelClient(SETTINGS).createCall({
+      filename: 'q-5001-989122606844-20260825-172759-1787662663.4705.wav',
+      direction: 'inbound',
+      recording_datetime: '2026-08-25T17:27:59+03:30',
+      ast_unique_seq: 4705,
+    });
+
+    assert.deepEqual(result, { id: 1767882711, astUniqueSeq: 4705, deduplicated: true });
+    assert.equal(posts, 1, 'the call must not be posted twice');
+  });
+
+  it('still reports failure when the row genuinely is not there', async () => {
+    globalThis.fetch = (async (_input: URL | RequestInfo, init?: RequestInit) => {
+      if ((init?.method ?? 'GET') === 'POST') {
+        throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+      }
+      return new Response(JSON.stringify({ total_items: 0, results: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }) as typeof fetch;
+
+    await assert.rejects(
+      () =>
+        new PanelClient(SETTINGS).createCall({
+          filename: 'x.wav',
+          direction: 'inbound',
+          recording_datetime: '2026-08-25T17:27:59+03:30',
+          ast_unique_seq: 4705,
+        }),
+      (error: unknown) => {
+        assert.ok(error instanceof PanelError);
+        assert.equal(error.retryable, true);
+        return true;
+      },
+    );
+  });
+
+  it('reports failure when the lookup is impossible (unparsed filename)', async () => {
+    let requests = 0;
+    globalThis.fetch = (async () => {
+      requests += 1;
+      throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+    }) as typeof fetch;
+
+    await assert.rejects(
+      () =>
+        new PanelClient(SETTINGS).createCall({
+          filename: 'x.wav',
+          direction: 'inbound',
+          recording_datetime: '2026-08-25T17:27:59+03:30',
+          // No ast_unique_seq — nothing to look the call up by.
+        }),
+      (error: unknown) => {
+        assert.ok(error instanceof PanelError);
+        return true;
+      },
+    );
+    assert.equal(requests, 1, 'no pointless lookup without a key to search on');
+  });
+});

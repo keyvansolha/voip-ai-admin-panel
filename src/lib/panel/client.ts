@@ -256,10 +256,30 @@ export class PanelClient {
 
   /** POST /api/voip/calls/ — returns the downstream call id. */
   async createCall(payload: CallPayload): Promise<CreateCallResult> {
-    const { status, text, json } = await this.request('/api/voip/calls/', {
-      method: 'POST',
-      body: payload,
-    });
+    let sent: { status: number; text: string; json: unknown };
+
+    try {
+      sent = await this.request('/api/voip/calls/', { method: 'POST', body: payload });
+    } catch (cause) {
+      /*
+       * A transport failure says nothing about whether the server processed the
+       * request. On a high-latency link the POST arrives, the row is inserted,
+       * and only the *response* is lost — so treating this as "it did not
+       * happen" both abandons a call that is already stored and re-POSTs it on
+       * the next attempt.
+       *
+       * Ask the panel what it actually has before believing the failure.
+       */
+      if (payload.ast_unique_seq) {
+        const existing = await this.findCallByAstUniqueSeq(payload.ast_unique_seq);
+        if (existing !== null) {
+          return { id: existing, astUniqueSeq: payload.ast_unique_seq, deduplicated: true };
+        }
+      }
+      throw cause;
+    }
+
+    const { status, text, json } = sent;
 
     if (status === 201 || status === 200) {
       const body = json as { id?: number; ast_unique_seq?: number } | null;
