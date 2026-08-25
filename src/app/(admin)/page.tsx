@@ -1,7 +1,13 @@
 import Link from 'next/link';
 import { getTranslator } from '@/lib/i18n';
 import { getSettings } from '@/lib/settings';
-import { dashboardStats, recentCalls, recentErrors, topTopics } from '@/lib/calls/queries';
+import {
+  dashboardStats,
+  deliveryBreakdown,
+  recentCalls,
+  recentErrors,
+  topTopics,
+} from '@/lib/calls/queries';
 import { queueStats } from '@/lib/queue';
 import { workerStatus } from '@/lib/worker';
 import { totalRecordingBytes } from '@/lib/storage/recordings';
@@ -25,6 +31,7 @@ export default async function DashboardPage({
   const stats = dashboardStats(offsetMinutesAt(Date.now(), timezone) * 60);
   const queue = queueStats();
   const worker = workerStatus();
+  const delivery = deliveryBreakdown();
   const [storageBytes, calls, errors, topics] = await Promise.all([
     totalRecordingBytes(),
     Promise.resolve(recentCalls(8)),
@@ -162,6 +169,29 @@ export default async function DashboardPage({
         </Card>
 
         <div className="space-y-4">
+          {delivery.length > 0 ? (
+            <Card title={t('delivery.title')}>
+              <ul className="divide-y divide-border">
+                {delivery.map((row) => {
+                  const problem =
+                    row.outcome === 'call_only_transcript_pending' ||
+                    row.outcome === 'failed_before_delivery';
+                  return (
+                    <li
+                      key={row.outcome}
+                      className="flex items-start justify-between gap-3 px-4 py-2 text-sm"
+                    >
+                      <span className={problem ? 'text-warn' : 'text-content-muted'}>
+                        {t(`delivery.${row.outcome}` as 'delivery.call_and_transcript')}
+                      </span>
+                      <span className="shrink-0 tabular-nums">{row.count}</span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </Card>
+          ) : null}
+
           <Card title={t('dashboard.recentErrors')}>
             {errors.length === 0 ? (
               <Empty>{t('dashboard.noErrors')}</Empty>

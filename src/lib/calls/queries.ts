@@ -131,6 +131,48 @@ export function recentErrors(limit = 6) {
     .all();
 }
 
+export const DELIVERY_OUTCOMES = [
+  'call_and_transcript',
+  'call_only_missed',
+  'call_only_skipped',
+  'call_only_transcript_pending',
+  'failed_before_delivery',
+  'not_delivered_yet',
+] as const;
+export type DeliveryOutcome = (typeof DELIVERY_OUTCOMES)[number];
+
+/**
+ * What actually reached the downstream panel, bucketed by outcome.
+ *
+ * "The call is in the panel but the transcript isn't" has several very
+ * different causes — a missed call with nothing to transcribe, an analysis that
+ * never ran, a delivery that failed halfway — and the panel itself cannot tell
+ * them apart. This splits them.
+ */
+export function deliveryBreakdown(): Array<{ outcome: DeliveryOutcome; count: number }> {
+  return db
+    .select({
+      outcome: sql<DeliveryOutcome>`CASE
+        WHEN ${calls.remoteCallPushedAt} IS NULL AND ${calls.status} = 'failed'
+          THEN 'failed_before_delivery'
+        WHEN ${calls.remoteCallPushedAt} IS NULL
+          THEN 'not_delivered_yet'
+        WHEN ${calls.remoteTranscriptPushedAt} IS NOT NULL
+          THEN 'call_and_transcript'
+        WHEN ${calls.missed} = 1
+          THEN 'call_only_missed'
+        WHEN ${calls.remoteTranscriptSkipReason} IS NOT NULL
+          THEN 'call_only_skipped'
+        ELSE 'call_only_transcript_pending'
+      END`,
+      count: sql<number>`COUNT(*)`,
+    })
+    .from(calls)
+    .groupBy(sql`1`)
+    .orderBy(sql`COUNT(*) DESC`)
+    .all();
+}
+
 /** Topic distribution over the last `days`, for the dashboard summary. */
 export function topTopics(days = 30, limit = 8): Array<{ topic: string; count: number }> {
   const since = nowSeconds() - days * 86_400;

@@ -150,6 +150,11 @@ export default async function CallDetailPage({
                   ? formatLocalDisplay(call.remoteTranscriptPushedAt, timezone)
                   : '—'}
               </Field>
+              {!call.remoteTranscriptPushedAt && call.remoteTranscriptSkipReason ? (
+                <Field label={t('call.field.transcriptSkipped')}>
+                  <span className="text-content-muted">{call.remoteTranscriptSkipReason}</span>
+                </Field>
+              ) : null}
               {call.remoteError ? (
                 <Field label={t('common.error')}>
                   <span className="text-danger">{call.remoteError}</span>

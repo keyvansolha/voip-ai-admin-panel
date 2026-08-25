@@ -158,4 +158,12 @@ export const migrations: readonly Migration[] = [
       CREATE INDEX event_logs_level_idx   ON event_logs(level, created_at);
     `,
   },
+  {
+    // Records why a call reached the panel without a transcript, instead of
+    // leaving that outcome invisible.
+    id: '0002_transcript_skip_reason',
+    sql: /* sql */ `
+      ALTER TABLE calls ADD COLUMN remote_transcript_skip_reason TEXT;
+    `,
+  },
 ];

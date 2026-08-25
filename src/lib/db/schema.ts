@@ -170,6 +170,12 @@ export const calls = sqliteTable(
     remoteCallId: integer('remote_call_id'),
     remoteCallPushedAt: integer('remote_call_pushed_at'),
     remoteTranscriptPushedAt: integer('remote_transcript_pushed_at'),
+    /**
+     * Why this call was delivered without a transcript. Null means either "a
+     * transcript was delivered" or "delivery has not been attempted" — the
+     * pushed-at timestamps distinguish those.
+     */
+    remoteTranscriptSkipReason: text('remote_transcript_skip_reason'),
     remoteError: text('remote_error'),
 
     createdAt: integer('created_at').notNull().default(now),

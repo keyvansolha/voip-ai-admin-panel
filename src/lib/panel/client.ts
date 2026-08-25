@@ -115,6 +115,37 @@ function isRetryableStatus(status: number): boolean {
   return status === 408 || status === 429 || status >= 500;
 }
 
+/**
+ * Turns a DRF validation body into one readable line.
+ *
+ * The panel answers a rejected field with `{"call_id": ["call_id must
+ * reference an existing calls.id."]}`, which is precise but unreadable when
+ * dumped raw into a log. This renders it as `call_id: call_id must reference an
+ * existing calls.id.` and names every offending field, so the fix is obvious
+ * without opening the panel's source.
+ */
+function describeValidationError(json: unknown, fallback: string): string {
+  if (!json || typeof json !== 'object' || Array.isArray(json)) return summarizeBody(fallback);
+
+  const record = json as Record<string, unknown>;
+
+  // `{"success": false, "error": "..."}` — the panel's own shape.
+  if (typeof record.error === 'string') return record.error;
+
+  const parts: string[] = [];
+  for (const [field, value] of Object.entries(record)) {
+    if (field === 'success') continue;
+    const messages = Array.isArray(value)
+      ? value.map((entry) => String(entry)).join(' ')
+      : typeof value === 'string'
+        ? value
+        : JSON.stringify(value);
+    parts.push(`${field}: ${messages}`);
+  }
+
+  return parts.length > 0 ? parts.join(' | ') : summarizeBody(fallback);
+}
+
 function summarizeBody(body: string): string {
   const trimmed = body.trim();
   return trimmed.length > 600 ? `${trimmed.slice(0, 600)}…` : trimmed;
@@ -227,6 +258,15 @@ export class PanelClient {
       );
     }
 
+    if (status === 400) {
+      throw new PanelError(
+        `Panel rejected the call (400) — ${describeValidationError(json, text)}`,
+        false,
+        status,
+        text,
+      );
+    }
+
     throw new PanelError(
       `Panel returned HTTP ${status} creating the call: ${summarizeBody(text)}`,
       isRetryableStatus(status),
@@ -240,7 +280,7 @@ export class PanelClient {
     try {
       const { status, json } = await this.request('/api/voip/calls/', {
         method: 'GET',
-        query: { ast_unique_seq: String(astUniqueSeq), per_page: '1' },
+        query: { ast_unique_seq: String(astUniqueSeq), limit: '1' },
       });
       if (status !== 200) return null;
 
@@ -252,22 +292,72 @@ export class PanelClient {
     }
   }
 
-  /** POST /api/voip/transcripts/ — one transcript per call; 409 means done already. */
+  /** GET /api/voip/transcripts/?call_id=… — confirms a transcript really exists. */
+  async transcriptExists(callId: number): Promise<boolean | null> {
+    try {
+      const { status, json } = await this.request('/api/voip/transcripts/', {
+        method: 'GET',
+        query: { call_id: String(callId), limit: '1' },
+      });
+      if (status !== 200) return null;
+
+      const results = (json as { results?: unknown[] } | null)?.results;
+      return Array.isArray(results) ? results.length > 0 : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * POST /api/voip/transcripts/ — one transcript per call.
+   *
+   * A 409 is *not* taken at face value. The panel wraps the insert in a single
+   * `except IntegrityError` that always answers "a transcript already exists for
+   * this call_id", so a NOT NULL or FK violation is reported with the same
+   * status and message as a genuine duplicate. Trusting it blindly would mark
+   * the call delivered while nothing was written. So the claim is verified with
+   * a read-back, and only a transcript that is actually there counts as done.
+   */
   async createTranscript(payload: TranscriptPayload): Promise<{ created: boolean }> {
-    const { status, text } = await this.request('/api/voip/transcripts/', {
+    const { status, text, json } = await this.request('/api/voip/transcripts/', {
       method: 'POST',
       body: payload,
     });
 
     if (status === 201 || status === 200) return { created: true };
 
-    // The transcript is already there; the desired end state holds, so this is
-    // success from the pipeline's point of view.
-    if (status === 409) return { created: false };
+    if (status === 409) {
+      const exists = await this.transcriptExists(payload.call_id);
+
+      // Genuinely already there: the desired end state holds.
+      if (exists === true) return { created: false };
+
+      // The read-back itself failed — cannot tell. Retry rather than record a
+      // delivery that may not have happened.
+      if (exists === null) {
+        throw new PanelError(
+          `Panel answered 409 for the transcript and the read-back check could not confirm it. ` +
+            `Original response: ${summarizeBody(text)}`,
+          true,
+          status,
+          text,
+        );
+      }
+
+      throw new PanelError(
+        `Panel answered 409 ("already exists") but no transcript is stored for call_id ` +
+          `${payload.call_id}. The panel reports every database integrity error with this same ` +
+          `409, so the real cause is most likely a rejected field value rather than a duplicate. ` +
+          `Original response: ${summarizeBody(text)}`,
+        false,
+        status,
+        text,
+      );
+    }
 
     if (status === 400) {
       throw new PanelError(
-        `Panel rejected the transcript (400): ${summarizeBody(text)}`,
+        `Panel rejected the transcript (400) — ${describeValidationError(json, text)}`,
         false,
         status,
         text,
@@ -296,11 +386,14 @@ export class PanelClient {
     try {
       const { status, text, json } = await this.request('/api/voip/calls/', {
         method: 'GET',
-        query: { per_page: '1' },
+        query: { limit: '1' },
       });
 
       if (status === 200) {
-        const count = (json as { count?: number } | null)?.count;
+        // The list envelope renamed `count` to `total_items` (and `per_page` to
+        // `limit`); both spellings are read so the check works either way.
+        const body = json as { total_items?: number; count?: number } | null;
+        const count = body?.total_items ?? body?.count;
         return { ok: true, count: typeof count === 'number' ? count : null };
       }
       if (status === 401) {

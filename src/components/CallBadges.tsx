@@ -54,21 +54,33 @@ export function DirectionBadge({
   );
 }
 
-/** Two ticks: was the call row delivered, was the transcript delivered. */
+/**
+ * What actually reached the downstream panel.
+ *
+ * "call only" is deliberately split in two: a deliberate skip (a missed call
+ * has nothing to transcribe) reads as normal, while a transcript that is owed
+ * but absent reads as a warning — that distinction is the whole point, since
+ * both look identical in the panel itself.
+ */
 export function DeliveryBadge({
   callPushedAt,
   transcriptPushedAt,
-  hasTranscript,
+  skipReason,
 }: {
   callPushedAt: number | null;
   transcriptPushedAt: number | null;
-  hasTranscript: boolean;
+  skipReason: string | null;
 }) {
   if (!callPushedAt) return <Badge tone="neutral">—</Badge>;
-  if (!hasTranscript) return <Badge tone="ok">call</Badge>;
-  return transcriptPushedAt ? (
-    <Badge tone="ok">call + transcript</Badge>
-  ) : (
-    <Badge tone="warn">call only</Badge>
-  );
+  if (transcriptPushedAt) return <Badge tone="ok">call + transcript</Badge>;
+
+  if (skipReason) {
+    return (
+      <span title={skipReason}>
+        <Badge tone="neutral">call only</Badge>
+      </span>
+    );
+  }
+
+  return <Badge tone="warn">transcript pending</Badge>;
 }

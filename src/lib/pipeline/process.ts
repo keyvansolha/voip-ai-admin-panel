@@ -295,8 +295,38 @@ async function pushToPanel(call: Call, settings: ReturnType<typeof getSettings>)
   }
 
   // -- The transcript
-  const hasAnalysis = !call.aiSkipped && call.transcriptText !== null;
-  if (!hasAnalysis || call.remoteTranscriptPushedAt !== null) return;
+  if (call.remoteTranscriptPushedAt !== null) return;
+
+  /*
+   * A transcript is owed whenever the model actually ran, even if it returned no
+   * transcript text.
+   *
+   * The previous rule ("only when transcriptText is set") silently threw away
+   * the topic, emotion, gender and product fields for any call the model
+   * summarised without a verbatim transcript — and said nothing about it, which
+   * is exactly the "the call is in the panel but the transcript is missing"
+   * symptom. `transcript_text` is nullable downstream, so send what we have.
+   */
+  const analysisRan = !call.aiSkipped && call.aiParseOk === true;
+
+  if (!analysisRan) {
+    // Say why, out loud. This is a normal outcome for a missed call and a
+    // problem worth seeing for anything else.
+    const reason = call.missed
+      ? `missed call (${call.missedReason ?? 'no audio'}) — nothing to transcribe`
+      : call.aiSkipped
+        ? 'AI analysis was skipped for this call'
+        : 'the model produced no usable analysis';
+
+    patchCall(call.id, { remoteTranscriptSkipReason: reason });
+    logEvent({
+      callId: call.id,
+      stage: 'push',
+      level: call.missed ? 'info' : 'warn',
+      message: `Call ${remoteCallId} delivered without a transcript: ${reason}.`,
+    });
+    return;
+  }
 
   try {
     const result = await client.createTranscript({
@@ -308,16 +338,24 @@ async function pushToPanel(call: Call, settings: ReturnType<typeof getSettings>)
       processing_date: formatProcessingDate(nowSeconds(), timezone),
       transcript_text: call.transcriptText,
       product_mention: call.productMention,
-      gender_label: call.genderLabel,
-      emotion_label: call.emotionLabel,
+      // These two columns are NOT nullable downstream — they are choice fields
+      // with a default, so an explicit null is rejected with a 400 while an
+      // absent key is fine. Fall back to the shared "unknown" member.
+      gender_label: call.genderLabel ?? 'unknown',
+      emotion_label: call.emotionLabel ?? 'unknown',
     });
 
-    patchCall(call.id, { remoteTranscriptPushedAt: nowSeconds(), remoteError: null });
+    patchCall(call.id, {
+      remoteTranscriptPushedAt: nowSeconds(),
+      remoteError: null,
+      remoteTranscriptSkipReason: null,
+    });
     logEvent({
       callId: call.id,
       stage: 'push',
       message: result.created
-        ? `Pushed transcript for downstream call ${remoteCallId}`
+        ? `Pushed transcript for downstream call ${remoteCallId}` +
+          (call.transcriptText === null ? ' (analysis only — the model returned no transcript text)' : '')
         : `Transcript already existed downstream for call ${remoteCallId}`,
     });
   } catch (cause) {
@@ -367,7 +405,19 @@ export async function processCall(callId: number): Promise<void> {
     return;
   }
 
-  if (!settings['ai.enabled']) {
+  /*
+   * A stored analysis is worth delivering whatever the current settings say.
+   *
+   * Keyed on aiParseOk alone, not on transcriptText: the model can return a
+   * valid analysis (topic, emotion, speaker) with no verbatim transcript, and
+   * requiring the text here would both re-bill that call to Gemini on every
+   * retry and drop the fields it did produce.
+   */
+  const alreadyAnalysed = call.aiParseOk === true;
+
+  // Turning AI off must not retro-actively discard work that is already done,
+  // so the shortcut only applies to calls that were never analysed.
+  if (!settings['ai.enabled'] && !alreadyAnalysed) {
     if (!call.aiSkipped) patchCall(callId, { aiSkipped: true });
     call = loadCall(callId);
 
@@ -383,9 +433,6 @@ export async function processCall(callId: number): Promise<void> {
     return;
   }
 
-  // Skip re-analysis when a previous attempt already produced a usable result
-  // and only the downstream push failed.
-  const alreadyAnalysed = call.aiParseOk === true && call.transcriptText !== null;
   if (!alreadyAnalysed) {
     await runAnalysis(call, settings);
     call = loadCall(callId);

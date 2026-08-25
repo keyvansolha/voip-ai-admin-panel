@@ -137,7 +137,7 @@ export default async function CallsPage({
                       <DeliveryBadge
                         callPushedAt={call.remoteCallPushedAt}
                         transcriptPushedAt={call.remoteTranscriptPushedAt}
-                        hasTranscript={call.transcriptText !== null}
+                        skipReason={call.remoteTranscriptSkipReason}
                       />
                     </td>
                     <td className="max-w-[18rem] truncate font-mono text-xs" dir="ltr">
