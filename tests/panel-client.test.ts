@@ -255,3 +255,82 @@ describe('createCall', () => {
     );
   });
 });
+
+describe('network failures', () => {
+  const attempt = (settings = SETTINGS) =>
+    new PanelClient(settings).createCall({
+      filename: 'x.wav',
+      direction: 'inbound',
+      recording_datetime: '2026-08-16T16:39:59+03:30',
+    });
+
+  function failFetch(error: unknown) {
+    globalThis.fetch = (async () => {
+      throw error;
+    }) as typeof fetch;
+  }
+
+  it('names a timeout and points at the setting that controls it', async () => {
+    // What AbortSignal.timeout actually throws.
+    const timeout = new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+    failFetch(timeout);
+
+    await assert.rejects(attempt, (error: unknown) => {
+      assert.ok(error instanceof PanelError);
+      assert.equal(error.retryable, true, 'a timeout is transient');
+      assert.match(error.message, /within 5000ms/);
+      assert.match(error.message, /firewall or geo-block/);
+      return true;
+    });
+  });
+
+  it('unwraps a DNS failure hidden behind "fetch failed"', async () => {
+    const wrapped = new TypeError('fetch failed');
+    (wrapped as { cause?: unknown }).cause = Object.assign(new Error('getaddrinfo ENOTFOUND'), {
+      code: 'ENOTFOUND',
+    });
+    failFetch(wrapped);
+
+    await assert.rejects(attempt, (error: unknown) => {
+      assert.ok(error instanceof PanelError);
+      assert.match(error.message, /Cannot resolve the hostname/);
+      assert.match(error.message, /ENOTFOUND/);
+      return true;
+    });
+  });
+
+  it('distinguishes a refused connection from a blocked one', async () => {
+    const refused = new TypeError('fetch failed');
+    (refused as { cause?: unknown }).cause = Object.assign(new Error('connect ECONNREFUSED'), {
+      code: 'ECONNREFUSED',
+    });
+    failFetch(refused);
+    await assert.rejects(attempt, (error: unknown) => {
+      assert.match((error as Error).message, /refused the connection/);
+      return true;
+    });
+
+    const blocked = new TypeError('fetch failed');
+    (blocked as { cause?: unknown }).cause = Object.assign(new Error('connect ETIMEDOUT'), {
+      code: 'ETIMEDOUT',
+    });
+    failFetch(blocked);
+    await assert.rejects(attempt, (error: unknown) => {
+      assert.match((error as Error).message, /TCP handshake never completed/);
+      return true;
+    });
+  });
+
+  it('reports a TLS problem as such', async () => {
+    const tls = new TypeError('fetch failed');
+    (tls as { cause?: unknown }).cause = Object.assign(new Error('certificate has expired'), {
+      code: 'CERT_HAS_EXPIRED',
+    });
+    failFetch(tls);
+
+    await assert.rejects(attempt, (error: unknown) => {
+      assert.match((error as Error).message, /TLS certificate problem/);
+      return true;
+    });
+  });
+});

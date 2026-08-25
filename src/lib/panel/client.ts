@@ -146,6 +146,56 @@ function describeValidationError(json: unknown, fallback: string): string {
   return parts.length > 0 ? parts.join(' | ') : summarizeBody(fallback);
 }
 
+/**
+ * Names the actual transport failure instead of relaying `fetch`'s opaque
+ * wording.
+ *
+ * A timeout surfaces as "The operation was aborted due to timeout" and a DNS or
+ * TLS failure as a bare "fetch failed", which say nothing about what to check.
+ * The real cause is nested in `error.cause`, so it is unwrapped and each case is
+ * paired with the setting or the check that resolves it.
+ */
+function describeNetworkError(cause: unknown, origin: string, timeoutMs: number): string {
+  const error = cause as { name?: string; message?: string; cause?: unknown } | null;
+  const inner = error?.cause as { code?: string; message?: string } | undefined;
+  const code = inner?.code;
+
+  if (error?.name === 'TimeoutError' || /aborted due to timeout/i.test(error?.message ?? '')) {
+    return (
+      `No response from ${origin} within ${timeoutMs}ms. The request left this server but the ` +
+      `panel did not answer in time — check that ${origin} is reachable from this machine ` +
+      `(a firewall or geo-block between the two is the usual cause), or raise the panel ` +
+      `request timeout in Settings if it is simply slow.`
+    );
+  }
+
+  if (code === 'ENOTFOUND' || code === 'EAI_AGAIN') {
+    return `Cannot resolve the hostname for ${origin} (${code}). Check DNS inside the container.`;
+  }
+
+  if (code === 'ECONNREFUSED') {
+    return `${origin} refused the connection (ECONNREFUSED). The host is reachable but nothing is listening on that port.`;
+  }
+
+  if (code === 'ECONNRESET' || code === 'EPIPE') {
+    return `${origin} dropped the connection (${code}). Often a proxy or firewall cutting the request mid-flight.`;
+  }
+
+  if (code === 'ETIMEDOUT' || code === 'UND_ERR_CONNECT_TIMEOUT') {
+    return (
+      `Could not open a connection to ${origin} (${code}) — the TCP handshake never completed. ` +
+      `The host is not accepting traffic from this server's IP address.`
+    );
+  }
+
+  if (typeof code === 'string' && (code.startsWith('CERT_') || code.startsWith('DEPTH_') || code === 'UNABLE_TO_VERIFY_LEAF_SIGNATURE')) {
+    return `TLS certificate problem talking to ${origin} (${code}).`;
+  }
+
+  const detail = inner?.message ?? error?.message ?? String(cause);
+  return `Could not reach the panel at ${origin}: ${detail}${code ? ` (${code})` : ''}`;
+}
+
 function summarizeBody(body: string): string {
   const trimmed = body.trim();
   return trimmed.length > 600 ? `${trimmed.slice(0, 600)}…` : trimmed;
@@ -190,8 +240,7 @@ export class PanelClient {
         cache: 'no-store',
       });
     } catch (cause) {
-      const message = cause instanceof Error ? cause.message : String(cause);
-      throw new PanelError(`Could not reach the panel at ${url.origin}: ${message}`, true);
+      throw new PanelError(describeNetworkError(cause, url.origin, this.timeoutMs), true);
     }
 
     const text = await response.text();
