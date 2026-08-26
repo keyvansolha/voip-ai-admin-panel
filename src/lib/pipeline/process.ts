@@ -208,6 +208,46 @@ async function runAnalysis(call: Call, settings: ReturnType<typeof getSettings>)
 
 // --- Stage 2: push downstream ----------------------------------------------
 
+/**
+ * Writes the full transport diagnostics to the event log.
+ *
+ * The message on the call row is necessarily short; this is where the class
+ * chain, syscall codes, timings and stack go, so a failure can be classified
+ * afterwards without reproducing it.
+ */
+function logTransportFailure(callId: number, what: string, cause: unknown): void {
+  const diagnostics = cause instanceof PanelError ? cause.diagnostics : undefined;
+
+  logEvent({
+    callId,
+    stage: 'push',
+    level: 'error',
+    message: `${what} failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+    meta: diagnostics
+      ? {
+          // The discriminator: did we give up, or did the connection break?
+          verdict: diagnostics.timedOut
+            ? 'our deadline expired'
+            : 'connection failed before our deadline',
+          phase: diagnostics.phase,
+          elapsedMs: diagnostics.elapsedMs,
+          timeoutMs: diagnostics.timeoutMs,
+          percentOfBudget: Math.round((diagnostics.elapsedMs / diagnostics.timeoutMs) * 100),
+          httpStatus: diagnostics.httpStatus ?? null,
+          errorChain: diagnostics.chain,
+          stack: diagnostics.stack,
+        }
+      : {
+          verdict: 'not a transport failure',
+          errorClass: cause instanceof Error ? cause.constructor.name : typeof cause,
+          retryable: cause instanceof PanelError ? cause.retryable : null,
+          httpStatus: cause instanceof PanelError ? (cause.status ?? null) : null,
+          responseBody: cause instanceof PanelError ? (cause.body ?? null) : null,
+          stack: cause instanceof Error ? cause.stack : null,
+        },
+  });
+}
+
 async function pushToPanel(call: Call, settings: ReturnType<typeof getSettings>): Promise<void> {
   if (!settings['panel.enabled']) {
     logEvent({
@@ -290,6 +330,7 @@ async function pushToPanel(call: Call, settings: ReturnType<typeof getSettings>)
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : String(cause);
       patchCall(call.id, { remoteError: message.slice(0, 2000) });
+      logTransportFailure(call.id, 'POST /api/voip/calls/', cause);
 
       /*
        * The call id may simply be unknowable: the row can be stored downstream
@@ -344,6 +385,14 @@ async function pushToPanel(call: Call, settings: ReturnType<typeof getSettings>)
     return;
   }
 
+  const transcriptStartedAt = Date.now();
+  // The transcript text dominates the request body; a Persian transcript of a
+  // long call is by far the largest thing this system sends, so its size is
+  // worth having next to the timing when a POST stalls.
+  const transcriptBodyBytes = call.transcriptText
+    ? Buffer.byteLength(call.transcriptText, 'utf8')
+    : 0;
+
   try {
     const result = await client.createTranscript({
       call_id: remoteCallId,
@@ -367,17 +416,24 @@ async function pushToPanel(call: Call, settings: ReturnType<typeof getSettings>)
       remoteError: null,
       remoteTranscriptSkipReason: null,
     });
+    const elapsedMs = Date.now() - transcriptStartedAt;
     logEvent({
       callId: call.id,
       stage: 'push',
-      message: result.created
-        ? `Pushed transcript for downstream call ${remoteCallId}` +
-          (call.transcriptText === null ? ' (analysis only — the model returned no transcript text)' : '')
-        : `Transcript already existed downstream for call ${remoteCallId}`,
+      message:
+        (result.created
+          ? `Pushed transcript for downstream call ${remoteCallId}`
+          : `Transcript already existed downstream for call ${remoteCallId}`) +
+        (call.transcriptText === null ? ' (analysis only — the model returned no transcript text)' : '') +
+        ` in ${elapsedMs}ms`,
+      // Recorded on success too: a round trip creeping toward the timeout is
+      // the warning that precedes the failure, and is invisible otherwise.
+      meta: { elapsedMs, timeoutMs: settings['panel.timeoutMs'], bodyBytes: transcriptBodyBytes },
     });
   } catch (cause) {
     const message = cause instanceof Error ? cause.message : String(cause);
     patchCall(call.id, { remoteError: message.slice(0, 2000) });
+    logTransportFailure(call.id, 'POST /api/voip/transcripts/', cause);
     throw new PipelineError(message, cause instanceof PanelError ? cause.retryable : true, 'push');
   }
 }
