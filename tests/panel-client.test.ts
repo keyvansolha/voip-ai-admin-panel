@@ -417,3 +417,116 @@ describe('a lost response must not be read as a lost write', () => {
     assert.equal(requests, 1, 'no pointless lookup without a key to search on');
   });
 });
+
+describe('transcript keyed on ast_unique_seq', () => {
+  it('sends the sequence alongside call_id so it works before and after the panel change', async () => {
+    stubFetch(() => ({ status: 201, body: { success: true, call_id: 3757 } }));
+
+    await new PanelClient(SETTINGS).createTranscript({ ...TRANSCRIPT, ast_unique_seq: 4705 });
+
+    const body = calls[0]!.body as Record<string, unknown>;
+    assert.equal(body.call_id, 3757);
+    assert.equal(body.ast_unique_seq, 4705);
+  });
+
+  it('delivers with the sequence alone when the call id was never received', async () => {
+    stubFetch(() => ({ status: 201, body: { success: true, call_id: 3757 } }));
+
+    const result = await new PanelClient(SETTINGS).createTranscript({
+      ast_unique_seq: 4705,
+      recording_filename: 'q-5001-989122606844-20260825-172759-1787662663.4705.wav',
+      topics: 'pricing_inquiry',
+      answered_by: 'unknown',
+      processing_date: '2026-08-25',
+    });
+
+    assert.deepEqual(result, { created: true });
+    const body = calls[0]!.body as Record<string, unknown>;
+    assert.equal(body.ast_unique_seq, 4705);
+    assert.ok(!('call_id' in body), 'no call_id is sent when none is known');
+  });
+
+  it('verifies a 409 by resolving the sequence to a call id first', async () => {
+    const seen: string[] = [];
+    stubFetch((call) => {
+      seen.push(`${call.method} ${call.url.replace('https://mytsapp.ir', '')}`);
+      if (call.method === 'POST') {
+        return { status: 409, body: { success: false, error: 'a transcript already exists' } };
+      }
+      if (call.url.includes('/calls/')) {
+        return { status: 200, body: { total_items: 1, results: [{ id: 3757 }] } };
+      }
+      return { status: 200, body: { total_items: 1, results: [{ call_id: 3757 }] } };
+    });
+
+    const result = await new PanelClient(SETTINGS).createTranscript({
+      ast_unique_seq: 4705,
+      recording_filename: 'x.wav',
+      topics: 'pricing_inquiry',
+      answered_by: 'unknown',
+      processing_date: '2026-08-25',
+    });
+
+    assert.deepEqual(result, { created: false });
+    assert.match(seen[1]!, /GET \/api\/voip\/calls\/\?ast_unique_seq=4705/);
+    assert.match(seen[2]!, /GET \/api\/voip\/transcripts\/\?call_id=3757/);
+  });
+
+  it('names the sequence when a 409 is disproved by the read-back', async () => {
+    // The call resolves, but no transcript is stored against it — so the 409
+    // was some other integrity error wearing a duplicate's clothes.
+    stubFetch((call) => {
+      if (call.method === 'POST') {
+        return { status: 409, body: { success: false, error: 'a transcript already exists' } };
+      }
+      if (call.url.includes('/calls/')) {
+        return { status: 200, body: { total_items: 1, results: [{ id: 3757 }] } };
+      }
+      return { status: 200, body: { total_items: 0, results: [] } };
+    });
+
+    await assert.rejects(
+      () =>
+        new PanelClient(SETTINGS).createTranscript({
+          ast_unique_seq: 4705,
+          recording_filename: 'x.wav',
+          topics: 'pricing_inquiry',
+          answered_by: 'unknown',
+          processing_date: '2026-08-25',
+        }),
+      (error: unknown) => {
+        assert.ok(error instanceof PanelError);
+        assert.equal(error.retryable, false);
+        assert.match(error.message, /ast_unique_seq 4705/);
+        return true;
+      },
+    );
+  });
+
+  it('retries when the sequence cannot even be resolved to a call', async () => {
+    // Nothing can be established either way here, so the only safe answer is
+    // "try again" — never "delivered".
+    stubFetch((call) =>
+      call.method === 'POST'
+        ? { status: 409, body: { success: false, error: 'a transcript already exists' } }
+        : { status: 200, body: { total_items: 0, results: [] } },
+    );
+
+    await assert.rejects(
+      () =>
+        new PanelClient(SETTINGS).createTranscript({
+          ast_unique_seq: 4705,
+          recording_filename: 'x.wav',
+          topics: 'pricing_inquiry',
+          answered_by: 'unknown',
+          processing_date: '2026-08-25',
+        }),
+      (error: unknown) => {
+        assert.ok(error instanceof PanelError);
+        assert.equal(error.retryable, true);
+        assert.match(error.message, /could not confirm/);
+        return true;
+      },
+    );
+  });
+})

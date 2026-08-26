@@ -59,7 +59,18 @@ export interface CallPayload {
 }
 
 export interface TranscriptPayload {
-  call_id: number;
+  /**
+   * The panel's own call id. Optional only because it may be unknowable: on a
+   * lossy link the reply carrying it can be lost. Supply `ast_unique_seq`
+   * instead in that case — newer panel builds accept it as an alternative key.
+   */
+  call_id?: number;
+  /**
+   * Asterisk's sequence number, which this side already knows without needing a
+   * reply. Sent alongside `call_id` whenever available so it works before and
+   * after the panel gains support for it (DRF ignores unknown fields).
+   */
+  ast_unique_seq?: number | null;
   recording_filename: string;
   topics: string;
   answered_by: string;
@@ -378,6 +389,18 @@ export class PanelClient {
   }
 
   /**
+   * Same check when only the Asterisk sequence is known: resolve it to a call
+   * id first. Returns null when that cannot be established either way.
+   */
+  private async transcriptExistsForPayload(payload: TranscriptPayload): Promise<boolean | null> {
+    if (payload.call_id !== undefined) return this.transcriptExists(payload.call_id);
+    if (!payload.ast_unique_seq) return null;
+
+    const callId = await this.findCallByAstUniqueSeq(payload.ast_unique_seq);
+    return callId === null ? null : this.transcriptExists(callId);
+  }
+
+  /**
    * POST /api/voip/transcripts/ — one transcript per call.
    *
    * A 409 is *not* taken at face value. The panel wraps the insert in a single
@@ -396,7 +419,7 @@ export class PanelClient {
     if (status === 201 || status === 200) return { created: true };
 
     if (status === 409) {
-      const exists = await this.transcriptExists(payload.call_id);
+      const exists = await this.transcriptExistsForPayload(payload);
 
       // Genuinely already there: the desired end state holds.
       if (exists === true) return { created: false };
@@ -414,8 +437,9 @@ export class PanelClient {
       }
 
       throw new PanelError(
-        `Panel answered 409 ("already exists") but no transcript is stored for call_id ` +
-          `${payload.call_id}. The panel reports every database integrity error with this same ` +
+        `Panel answered 409 ("already exists") but no transcript is stored for ` +
+          `${payload.call_id !== undefined ? `call_id ${payload.call_id}` : `ast_unique_seq ${payload.ast_unique_seq}`}. ` +
+          `The panel reports every database integrity error with this same ` +
           `409, so the real cause is most likely a rejected field value rather than a duplicate. ` +
           `Original response: ${summarizeBody(text)}`,
         false,

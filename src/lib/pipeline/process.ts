@@ -290,6 +290,22 @@ async function pushToPanel(call: Call, settings: ReturnType<typeof getSettings>)
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : String(cause);
       patchCall(call.id, { remoteError: message.slice(0, 2000) });
+
+      /*
+       * The call id may simply be unknowable: the row can be stored downstream
+       * while the reply carrying its id is lost, and the recovery lookup travels
+       * the same lossy link and can be lost too.
+       *
+       * Rather than abandon the transcript for want of a number, try keying it
+       * on the Asterisk sequence — which this side has always known, no reply
+       * required. Panels that do not accept that key answer 400 and the original
+       * transport error is reported unchanged, so this can only ever help.
+       */
+      if (call.astUniqueSeq !== null && call.remoteTranscriptPushedAt === null) {
+        const delivered = await tryTranscriptByAstSeq(call, client, timezone);
+        if (delivered) return;
+      }
+
       throw new PipelineError(message, cause instanceof PanelError ? cause.retryable : true, 'push');
     }
   }
@@ -331,6 +347,7 @@ async function pushToPanel(call: Call, settings: ReturnType<typeof getSettings>)
   try {
     const result = await client.createTranscript({
       call_id: remoteCallId,
+      ast_unique_seq: call.astUniqueSeq,
       recording_filename: call.filename.slice(0, 255),
       // The panel's column is named `topics` (plural) but holds one value.
       topics: (call.topic ?? 'unknown').slice(0, 100),
@@ -362,6 +379,59 @@ async function pushToPanel(call: Call, settings: ReturnType<typeof getSettings>)
     const message = cause instanceof Error ? cause.message : String(cause);
     patchCall(call.id, { remoteError: message.slice(0, 2000) });
     throw new PipelineError(message, cause instanceof PanelError ? cause.retryable : true, 'push');
+  }
+}
+
+/**
+ * Last-resort transcript delivery when the panel's call id was never received.
+ *
+ * Returns true only if the panel actually accepted it. Any rejection is
+ * swallowed: the caller still reports the original transport failure, and the
+ * job retries as before.
+ */
+async function tryTranscriptByAstSeq(
+  call: Call,
+  client: PanelClient,
+  timezone: string,
+): Promise<boolean> {
+  if (call.aiSkipped || call.aiParseOk !== true) return false;
+
+  try {
+    await client.createTranscript({
+      ast_unique_seq: call.astUniqueSeq,
+      recording_filename: call.filename.slice(0, 255),
+      topics: (call.topic ?? 'unknown').slice(0, 100),
+      answered_by: (call.answeredBy ?? 'unknown').slice(0, 100),
+      processing_date: formatProcessingDate(nowSeconds(), timezone),
+      transcript_text: call.transcriptText,
+      product_mention: call.productMention,
+      gender_label: call.genderLabel ?? 'unknown',
+      emotion_label: call.emotionLabel ?? 'unknown',
+    });
+
+    patchCall(call.id, {
+      remoteTranscriptPushedAt: nowSeconds(),
+      remoteError: null,
+      remoteTranscriptSkipReason: null,
+    });
+    logEvent({
+      callId: call.id,
+      stage: 'push',
+      message:
+        `Delivered the transcript keyed on ast_unique_seq ${call.astUniqueSeq} — ` +
+        `the panel never returned a call id for this recording.`,
+    });
+    return true;
+  } catch (cause) {
+    logEvent({
+      callId: call.id,
+      stage: 'push',
+      level: 'debug',
+      message:
+        `Could not deliver the transcript by ast_unique_seq either: ` +
+        `${cause instanceof Error ? cause.message : String(cause)}`,
+    });
+    return false;
   }
 }
 
